@@ -86,13 +86,18 @@ class BigramLanguageModel(nn.Module):
       # 经过网络处理 →
       # 最后再映射回 vocab_size。
     # n_embd = hidden dimension
+    self.position_embedding_table = nn.Embedding(block_size, n_embd) 
+    # 位置编码表，block_size 是最大上下文长度（模型能看到的最长文本长度），n_embd 是 embedding 的维度
     self.lm_head = nn.Linear(n_embd, vocab_size) # 把 embedding 映射回 vocab_size
 
   def forward(self, idx, targets=None):
+    B, T = idx.shape
 
     # idx and targets are both (B, T)
     tok_embd = self.token_embedding_table(idx) # (B, T, C)
-    logits = self.lm_head(tok_embd) # (B, T, vocab_size)
+    pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
+    x = tok_embd + pos_embd # (B, T, C) 位置编码和 token embedding 相加，得到最终的输入表示
+    logits = self.lm_head(x) # (B, T, vocab_size)
 
     if targets is None:
       loss = None
