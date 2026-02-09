@@ -14,6 +14,7 @@ max_iters = 3000
 learning_rate = 1e-2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
+n_embd = 32 # 每个 token 用多少维向量表示
 
 torch.manual_seed(1008)
 
@@ -72,18 +73,26 @@ def estimate_loss():
     return out
 
 class BigramLanguageModel(nn.Module):
-  def __init__(self, vocab_size):
+  def __init__(self):
     super().__init__()
-    self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+    self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
     # nn.Embedding(num_embeddings, embedding_dim)
       # num_embeddings <-- 词表大小（多少个 token）
       # embedding_dim <-- 每个 token 用多少维向量表示
       # Embedding = 选矩阵的一行  Linear = 矩阵乘法
 
+    # 因为模型不再让 embedding 直接当 logits，而是：
+      # 用低维 embedding 表示 token →
+      # 经过网络处理 →
+      # 最后再映射回 vocab_size。
+    # n_embd = hidden dimension
+    self.lm_head = nn.Linear(n_embd, vocab_size) # 把 embedding 映射回 vocab_size
+
   def forward(self, idx, targets=None):
 
     # idx and targets are both (B, T)
-    logits = self.token_embedding_table(idx) # (B, T, C)
+    tok_embd = self.token_embedding_table(idx) # (B, T, C)
+    logits = self.lm_head(tok_embd) # (B, T, vocab_size)
 
     if targets is None:
       loss = None
@@ -124,7 +133,7 @@ class BigramLanguageModel(nn.Module):
       idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
     return idx
 
-model = BigramLanguageModel(vocab_size) # BigramLanguageModel.__init__(self, vocab_size)
+model = BigramLanguageModel() # BigramLanguageModel.__init__(self, vocab_size)
 m = model.to(device) # 把模型的参数移动到指定计算设备上（CPU / GPU），m是model的别名，指向同一个对象
 # logits, loss = m(xb, yb) # out = m.__call__(xb, yb)
                            # nn.Module.__call__() 内部会自动调用class的 forward() 方法
