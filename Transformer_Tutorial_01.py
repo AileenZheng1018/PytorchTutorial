@@ -124,11 +124,19 @@ class MultiHeadAttention(nn.Module):
     # 创建 num_heads 个 Head 模块，并把它们放在一个 ModuleList 中，方便在 forward 中迭代调用
     # ModuleList 是一个特殊的容器，用来存储 nn.Module 对象的
     self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+    self.proj = nn.Linear(n_embd, n_embd) # 最后把拼接后的输出映射回 n_embd 维，保持输入输出维度一致
 
   def forward(self, x):
     # 把每个 head 的输出拼接在一起，得到最终的输出。每个 head 的输出维度是 head_size，拼接后总维度是 num_heads * head_size。
     # torch.cat 是 PyTorch 中的一个函数，用于在指定维度上连接多个张量。这里我们在最后一个维度上连接每个 head 的输出。
     out = torch.cat([h(x) for h in self.heads], dim=-1)
+    out = self.proj(out) # (B,T,num_heads*head_size) -> (B,T,n_embd)
+     # 这里的 out 是多头自注意力机制的输出，经过线性变换后保持与输入维度一致，方便后续的残差连接和前馈网络处理。
+     # 多头自注意力机制通过并行计算多个 head 的注意力，可以让模型在不同的子空间中学习不同的表示，从而增强模型的表达能力。
+     # 最后通过线性变换把拼接后的输出映射回 n_embd 维，保持输入输出维度一致，方便后续的残差连接和前馈网络处理。
+     # 这个 MultiHeadAttention 模块现在包含了多个 Head，并且在 forward 中把它们的输出拼接在一起，形成了一个强大的自注意力机制。
+     # 在 Transformer 模型中，MultiHeadAttention 是核心组件之一，负责捕捉序列中不同位置之间的依赖关系和上下文信息。
+     # 通过多个 head 的并行计算，模型可以同时关注序列中的不同位置，从而更好地理解和生成文本数据。
     return out
   
 class Block(nn.Module): # 一个 Block = 多头自注意力（通信） + 前馈网络（计算） + 残差连接
@@ -141,18 +149,12 @@ class Block(nn.Module): # 一个 Block = 多头自注意力（通信） + 前馈
     self.ffwd = FeedForward(n_embd) # (B, T, C) -> (B, T, C) 前馈网络保持输入输出维度一致
 
   def forward(self, x):
-    x = self.sa(x) # 先经过多头自注意力层，得到新的表示
-     # 这里没有显式的残差连接，但在实际的 Transformer 中，通常会在多头自注意力层和前馈网络之间添加残差连接和 LayerNorm
-    x = self.ffwd(x) # 再经过前馈网络，得到最终的输出表示
-     # 这里同样没有显式的残差连接，但在实际的 Transformer 中，通常会在前馈网络之后添加残差连接和 LayerNorm
+    x = self.sa(x) + x # 先经过多头自注意力模块，得到新的表示，然后加上原输入 x，形成残差连接。这样可以帮助信息流在网络中更好地传播，缓解梯度消失问题。
+    x = self.ffwd(x) + x # 再经过前馈网络，得到新的表示，再加上输入 x，形成另一个残差连接。这样每个 Block 都有两个残差连接，进一步增强信息流和梯度流。
     return x
 
-# 这个 Block 的设计存在一些问题：
-# 没有残差连接，导致信息流在网络中被完全切断。
-# 每一层都会完全覆盖原信息
-# 深层时容易梯度消失 / 爆炸
-# 训练非常不稳定
-# 模型退化严重
+# 这个 Block 现在包含了多头自注意力机制和前馈网络，并且在每个模块后都有残差连接。
+# 这是 Transformer 模型的基本构建块，多个 Block 堆叠在一起可以构成一个深层的 Transformer 模型，具有强大的表达能力。
 
 
 class BigramLanguageModel(nn.Module):
