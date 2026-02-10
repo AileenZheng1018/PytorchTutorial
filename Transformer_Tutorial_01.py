@@ -72,6 +72,36 @@ def estimate_loss():
     model.train() # 切回训练模式
     return out
 
+class Head(nn.Module):
+  """ one head of self-attention """
+
+  def __init__(self, head_size):
+    super().__init__()
+    self.key = nn.Linear(n_embd, head_size, bias=False)
+    self.query = nn.Linear(n_embd, head_size, bias=False)
+    self.value = nn.Linear(n_embd, head_size, bias=False)
+    self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # tril = lower triangular matrix
+    # register_buffer <-- 把一个 tensor 注册为模型的 buffer
+    # 这个 tensor 不会被视为模型的参数（不会被优化器更新），但会随着模型一起保存和加载。
+    # 这里用来存储一个下三角矩阵，表示在自注意力计算中，哪些位置可以看到哪些位置
+    # （即只能看到当前和之前的位置，不能看到未来的位置）。
+
+  def forward(self, x):
+    B,T,C = x.shape
+    k = self.key(x)   # (B,T,C) -> (B,T,head_size)
+    q = self.query(x) # (B,T,C) -> (B,T,head_size)
+    # compute attention scores ("affinities")
+    wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,head_size) @ (B,head_size,T) -> (B,T,T)
+    wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B,T,T) 通过 tril 矩阵把未来位置的权重设置为 -inf，确保模型只能关注当前和之前的位置
+    wei = F.softmax(wei, dim=-1) # (B,T,T) 对每一行进行 softmax，得到注意力权重
+     # 这里的 wei 是一个注意力权重矩阵，表示每个位置对其他位置的关注程度。每一行的元素之和为 1，表示该位置的注意力分布。
+     # 例如，wei[i,j] 表示位置 i 对位置 j 的关注程度。由于使用了 tril 矩阵，wei[i,j] 只有在 j <= i 时才可能非零，表示位置 i 只能关注位置 j（即当前和之前的位置）。
+     # 这个注意力权重矩阵是自注意力机制的核心，决定了模型在处理序列数据时如何聚合不同位置的信息。
+     # 注意力权重矩阵的形状是 (B,T,T)，其中 B 是批量大小，T 是序列长度。每个位置 i 的注意力权重分布在该位置的行上，表示位置 i 对所有位置 j 的关注程度。
+    v = self.value(x) # (B,T,C) -> (B,T,head_size)
+    out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
+    return out
+
 class BigramLanguageModel(nn.Module):
   def __init__(self):
     super().__init__()
@@ -88,6 +118,7 @@ class BigramLanguageModel(nn.Module):
     # n_embd = hidden dimension
     self.position_embedding_table = nn.Embedding(block_size, n_embd) 
     # 位置编码表，block_size 是最大上下文长度（模型能看到的最长文本长度），n_embd 是 embedding 的维度
+    self.sa_head = Head(n_embd) # 一个自注意力头，输入输出维度都是 n_embd
     self.lm_head = nn.Linear(n_embd, vocab_size) # 把 embedding 映射回 vocab_size
 
   def forward(self, idx, targets=None):
@@ -97,6 +128,7 @@ class BigramLanguageModel(nn.Module):
     tok_embd = self.token_embedding_table(idx) # (B, T, C)
     pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
     x = tok_embd + pos_embd # (B, T, C) 位置编码和 token embedding 相加，得到最终的输入表示
+    x = self.sa_head(x) # (B, T, C) 经过自注意力层处理
     logits = self.lm_head(x) # (B, T, vocab_size)
 
     if targets is None:
@@ -126,8 +158,10 @@ class BigramLanguageModel(nn.Module):
     # idx is (B, T)-array of indices in the current text
     # max_new_tokens: 要新生成多少个 token
     for _ in range(max_new_tokens):   # 循环 max_new_tokens 次，每次生成一个 token。
+      # 每次循环，模型都会根据当前文本 idx 预测下一个 token 的概率分布，然后从中采样一个 token，追加到 idx 中，形成新的文本输入。
+      idx_cond = idx[:, -block_size:] # (B, block_size) 取当前文本的最后 block_size 个 token 作为输入，确保输入长度不超过模型的上下文窗口。
       # 预测
-      logits, loss = self(idx) # 等价于logits, loss = self.forward(idx)
+      logits, loss = self(idx_cond) # 等价于logits, loss = self.forward(idx_cond)
       # 只关注最后一次
       logits = logits[:, -1, :] # 变成(B, C)
       # apply softmax
