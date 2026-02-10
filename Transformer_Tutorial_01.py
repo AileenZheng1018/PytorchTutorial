@@ -10,10 +10,10 @@ import lightning as L
 # 定义超参数
 batch_size = 32
 block_size = 8
-max_iters = 3000
-learning_rate = 1e-2
+max_iters = 5000
+learning_rate = 1e-3
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
+eval_iters = 300
 n_embd = 32 # 每个 token 用多少维向量表示
 
 torch.manual_seed(1008)
@@ -100,6 +100,21 @@ class Head(nn.Module):
      # 注意力权重矩阵的形状是 (B,T,T)，其中 B 是批量大小，T 是序列长度。每个位置 i 的注意力权重分布在该位置的行上，表示位置 i 对所有位置 j 的关注程度。
     v = self.value(x) # (B,T,C) -> (B,T,head_size)
     out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
+    return out
+  
+class MultiHeadAttention(nn.Module):
+  """ multiple heads of self-attention in parallel """
+
+  def __init__(self, num_heads, head_size):
+    super().__init__()
+    # 创建 num_heads 个 Head 模块，并把它们放在一个 ModuleList 中，方便在 forward 中迭代调用
+    # ModuleList 是一个特殊的容器，用来存储 nn.Module 对象的
+    self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+  def forward(self, x):
+    # 把每个 head 的输出拼接在一起，得到最终的输出。每个 head 的输出维度是 head_size，拼接后总维度是 num_heads * head_size。
+    # torch.cat 是 PyTorch 中的一个函数，用于在指定维度上连接多个张量。这里我们在最后一个维度上连接每个 head 的输出。
+    out = torch.cat([h(x) for h in self.heads], dim=-1)
     return out
 
 class BigramLanguageModel(nn.Module):
