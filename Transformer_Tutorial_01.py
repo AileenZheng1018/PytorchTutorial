@@ -102,6 +102,20 @@ class Head(nn.Module):
     out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
     return out
   
+class FeedForward(nn.Module):
+  """ a simple linear layer followed by a non-linearity """
+
+  def __init__(self, n_embd):
+    super().__init__()
+    self.net = nn.Sequential(
+      nn.Linear(n_embd, 4*n_embd), # 把 embedding 的维度扩展到 4 倍，增加模型的表达能力
+      nn.ReLU(), # 非线性激活函数，增加模型的非线性表达能力
+      nn.Linear(4*n_embd, n_embd), # 再把维度缩回 n_embd，保持输入输出维度一致
+    )
+
+  def forward(self, x):
+    return self.net(x)
+  
 class MultiHeadAttention(nn.Module):
   """ multiple heads of self-attention in parallel """
 
@@ -134,6 +148,7 @@ class BigramLanguageModel(nn.Module):
     self.position_embedding_table = nn.Embedding(block_size, n_embd) 
     # 位置编码表，block_size 是最大上下文长度（模型能看到的最长文本长度），n_embd 是 embedding 的维度
     self.sa_head = MultiHeadAttention(4, n_embd // 4) # 4 个 head，每个 head 的维度是 n_embd // 4，这样拼接后总维度还是 n_embd
+    self.ffwd = FeedForward(n_embd) # (B, T, C) -> (B, T, C) 前馈网络保持输入输出维度一致
     self.lm_head = nn.Linear(n_embd, vocab_size) # 把 embedding 映射回 vocab_size
 
   def forward(self, idx, targets=None):
@@ -144,6 +159,7 @@ class BigramLanguageModel(nn.Module):
     pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
     x = tok_embd + pos_embd # (B, T, C) 位置编码和 token embedding 相加，得到最终的输入表示
     x = self.sa_head(x) # (B, T, C) 经过自注意力层处理
+    x = self.ffwd(x) # (B, T, C) 经过前馈网络处理
     logits = self.lm_head(x) # (B, T, vocab_size)
 
     if targets is None:
