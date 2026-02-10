@@ -133,7 +133,7 @@ class BigramLanguageModel(nn.Module):
     # n_embd = hidden dimension
     self.position_embedding_table = nn.Embedding(block_size, n_embd) 
     # 位置编码表，block_size 是最大上下文长度（模型能看到的最长文本长度），n_embd 是 embedding 的维度
-    self.sa_head = Head(n_embd) # 一个自注意力头，输入输出维度都是 n_embd
+    self.sa_head = MultiHeadAttention(4, n_embd // 4) # 4 个 head，每个 head 的维度是 n_embd // 4，这样拼接后总维度还是 n_embd
     self.lm_head = nn.Linear(n_embd, vocab_size) # 把 embedding 映射回 vocab_size
 
   def forward(self, idx, targets=None):
