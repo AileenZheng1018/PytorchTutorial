@@ -8,13 +8,16 @@ from torch.utils.data import TensorDataset, DataLoader
 import lightning as L
 
 # 定义超参数
-batch_size = 32
-block_size = 8
+batch_size = 64
+block_size = 256
 max_iters = 5000
-learning_rate = 1e-3
+learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 300
-n_embd = 32 # 每个 token 用多少维向量表示
+n_embd = 384 # 每个 token 用多少维向量表示
+n_head = 8 # 多头注意力机制中 head 的数量
+n_layer = 6 # Transformer block 的数量
+dropout = 0.2 # dropout 的概率
 
 torch.manual_seed(1008)
 
@@ -86,6 +89,8 @@ class Head(nn.Module):
     # 这里用来存储一个下三角矩阵，表示在自注意力计算中，哪些位置可以看到哪些位置
     # （即只能看到当前和之前的位置，不能看到未来的位置）。
 
+    self.dropout = nn.Dropout(dropout) # dropout 层，随机丢弃一些神经元，防止过拟合
+
   def forward(self, x):
     B,T,C = x.shape
     k = self.key(x)   # (B,T,C) -> (B,T,head_size)
@@ -98,23 +103,10 @@ class Head(nn.Module):
      # 例如，wei[i,j] 表示位置 i 对位置 j 的关注程度。由于使用了 tril 矩阵，wei[i,j] 只有在 j <= i 时才可能非零，表示位置 i 只能关注位置 j（即当前和之前的位置）。
      # 这个注意力权重矩阵是自注意力机制的核心，决定了模型在处理序列数据时如何聚合不同位置的信息。
      # 注意力权重矩阵的形状是 (B,T,T)，其中 B 是批量大小，T 是序列长度。每个位置 i 的注意力权重分布在该位置的行上，表示位置 i 对所有位置 j 的关注程度。
+    wei = self.dropout(wei) # dropout 作用在注意力权重上，随机丢弃一些注意力连接，防止过拟合
     v = self.value(x) # (B,T,C) -> (B,T,head_size)
     out = wei @ v # (B,T,T) @ (B,T,head_size) -> (B,T,head_size)
     return out
-  
-class FeedForward(nn.Module):
-  """ a simple linear layer followed by a non-linearity """
-
-  def __init__(self, n_embd):
-    super().__init__()
-    self.net = nn.Sequential(
-      nn.Linear(n_embd, 4*n_embd), # 把 embedding 的维度扩展到 4 倍，增加模型的表达能力
-      nn.ReLU(), # 非线性激活函数，增加模型的非线性表达能力
-      nn.Linear(4*n_embd, n_embd), # 再把维度缩回 n_embd，保持输入输出维度一致
-    )
-
-  def forward(self, x):
-    return self.net(x)
   
 class MultiHeadAttention(nn.Module):
   """ multiple heads of self-attention in parallel """
@@ -125,6 +117,7 @@ class MultiHeadAttention(nn.Module):
     # ModuleList 是一个特殊的容器，用来存储 nn.Module 对象的
     self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
     self.proj = nn.Linear(n_embd, n_embd) # 最后把拼接后的输出映射回 n_embd 维，保持输入输出维度一致
+    self.dropout = nn.Dropout(dropout) # dropout 层，随机丢弃一些神经元，防止过拟合
 
   def forward(self, x):
     # 把每个 head 的输出拼接在一起，得到最终的输出。每个 head 的输出维度是 head_size，拼接后总维度是 num_heads * head_size。
@@ -138,6 +131,21 @@ class MultiHeadAttention(nn.Module):
      # 在 Transformer 模型中，MultiHeadAttention 是核心组件之一，负责捕捉序列中不同位置之间的依赖关系和上下文信息。
      # 通过多个 head 的并行计算，模型可以同时关注序列中的不同位置，从而更好地理解和生成文本数据。
     return out
+  
+class FeedForward(nn.Module):
+  """ a simple linear layer followed by a non-linearity """
+
+  def __init__(self, n_embd):
+    super().__init__()
+    self.net = nn.Sequential(
+      nn.Linear(n_embd, 4*n_embd), # 把 embedding 的维度扩展到 4 倍，增加模型的表达能力
+      nn.ReLU(), # 非线性激活函数，增加模型的非线性表达能力
+      nn.Linear(4*n_embd, n_embd), # 再把维度缩回 n_embd，保持输入输出维度一致
+      nn.Dropout(dropout) # dropout 层，随机丢弃一些神经元，防止过拟合
+    )
+
+  def forward(self, x):
+    return self.net(x)
   
 class Block(nn.Module): # 一个 Block = 多头自注意力（通信） + 前馈网络（计算） + 残差连接
   """ Transformer block: communication followed by computation """
@@ -175,13 +183,8 @@ class BigramLanguageModel(nn.Module):
     # n_embd = hidden dimension
     self.position_embedding_table = nn.Embedding(block_size, n_embd) 
     # 位置编码表，block_size 是最大上下文长度（模型能看到的最长文本长度），n_embd 是 embedding 的维度
-    self.blocks = nn.Sequential(
-      Block(n_embd, n_head=4),
-      Block(n_embd, n_head=4),
-      Block(n_embd, n_head=4),
-      Block(n_embd, n_head=4),
-      nn.LayerNorm(n_embd)
-    ) # 4 个 Block 堆叠在一起，增加模型的深度和表达能力
+    self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)]) # 4 个 Block 堆叠在一起，增加模型的深度和表达能力
+    self.ln_f = nn.LayerNorm(n_embd) # 最后的 LayerNorm，保持输入输出维度一致
     self.lm_head = nn.Linear(n_embd, vocab_size) # 最后把 n_embd 维的表示映射回 vocab_size 维，得到每个 token 的预测概率分布
 
   def forward(self, idx, targets=None):
@@ -192,6 +195,7 @@ class BigramLanguageModel(nn.Module):
     pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
     x = tok_embd + pos_embd # (B, T, C) 位置编码和 token embedding 相加，得到最终的输入表示
     x = self.blocks(x) # (B, T, C) 经过多个 Block 的处理，得到新的表示
+    x = self.ln_f(x) # (B, T, C) 最后的 LayerNorm，保持输入输出维度一致
     logits = self.lm_head(x) # (B, T, vocab_size)
 
     if targets is None:
