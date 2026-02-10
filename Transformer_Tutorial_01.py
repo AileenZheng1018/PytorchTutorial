@@ -147,10 +147,12 @@ class Block(nn.Module): # 一个 Block = 多头自注意力（通信） + 前馈
     head_size = n_embd // n_head # 每个 head 的维度
     self.sa = MultiHeadAttention(n_head, head_size) # 4 个 head，每个 head 的维度是 n_embd // 4，这样拼接后总维度还是 n_embd
     self.ffwd = FeedForward(n_embd) # (B, T, C) -> (B, T, C) 前馈网络保持输入输出维度一致
+    self.ln1 = nn.LayerNorm(n_embd) # LayerNorm 是一种归一化方法，帮助模型更快收敛和更稳定训练
+    self.ln2 = nn.LayerNorm(n_embd) # 每个 Block 有两个
 
   def forward(self, x):
-    x = self.sa(x) + x # 先经过多头自注意力模块，得到新的表示，然后加上原输入 x，形成残差连接。这样可以帮助信息流在网络中更好地传播，缓解梯度消失问题。
-    x = self.ffwd(x) + x # 再经过前馈网络，得到新的表示，再加上输入 x，形成另一个残差连接。这样每个 Block 都有两个残差连接，进一步增强信息流和梯度流。
+    x = self.sa(self.ln1(x)) + x # 先经过多头自注意力模块，得到新的表示，然后加上原输入 x，形成残差连接。这样可以帮助信息流在网络中更好地传播，缓解梯度消失问题。
+    x = self.ffwd(self.ln2(x)) + x # 再经过前馈网络，得到新的表示，再加上输入 x，形成另一个残差连接。这样每个 Block 都有两个残差连接，进一步增强信息流和梯度流。
     return x
 
 # 这个 Block 现在包含了多头自注意力机制和前馈网络，并且在每个模块后都有残差连接。
