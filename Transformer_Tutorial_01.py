@@ -180,6 +180,7 @@ class BigramLanguageModel(nn.Module):
       Block(n_embd, n_head=4),
       Block(n_embd, n_head=4),
       Block(n_embd, n_head=4),
+      nn.LayerNorm(n_embd)
     ) # 4 个 Block 堆叠在一起，增加模型的深度和表达能力
     self.lm_head = nn.Linear(n_embd, vocab_size) # 最后把 n_embd 维的表示映射回 vocab_size 维，得到每个 token 的预测概率分布
 
