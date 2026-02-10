@@ -130,6 +130,30 @@ class MultiHeadAttention(nn.Module):
     # torch.cat 是 PyTorch 中的一个函数，用于在指定维度上连接多个张量。这里我们在最后一个维度上连接每个 head 的输出。
     out = torch.cat([h(x) for h in self.heads], dim=-1)
     return out
+  
+class Block(nn.Module): # 一个 Block = 多头自注意力（通信） + 前馈网络（计算） + 残差连接
+  """ Transformer block: communication followed by computation """
+
+  def __init__(self, n_embd, n_head):
+    super().__init__()
+    head_size = n_embd // n_head # 每个 head 的维度
+    self.sa = MultiHeadAttention(n_head, head_size) # 4 个 head，每个 head 的维度是 n_embd // 4，这样拼接后总维度还是 n_embd
+    self.ffwd = FeedForward(n_embd) # (B, T, C) -> (B, T, C) 前馈网络保持输入输出维度一致
+
+  def forward(self, x):
+    x = self.sa(x) # 先经过多头自注意力层，得到新的表示
+     # 这里没有显式的残差连接，但在实际的 Transformer 中，通常会在多头自注意力层和前馈网络之间添加残差连接和 LayerNorm
+    x = self.ffwd(x) # 再经过前馈网络，得到最终的输出表示
+     # 这里同样没有显式的残差连接，但在实际的 Transformer 中，通常会在前馈网络之后添加残差连接和 LayerNorm
+    return x
+
+# 这个 Block 的设计存在一些问题：
+# 没有残差连接，导致信息流在网络中被完全切断。
+# 每一层都会完全覆盖原信息
+# 深层时容易梯度消失 / 爆炸
+# 训练非常不稳定
+# 模型退化严重
+
 
 class BigramLanguageModel(nn.Module):
   def __init__(self):
@@ -147,9 +171,13 @@ class BigramLanguageModel(nn.Module):
     # n_embd = hidden dimension
     self.position_embedding_table = nn.Embedding(block_size, n_embd) 
     # 位置编码表，block_size 是最大上下文长度（模型能看到的最长文本长度），n_embd 是 embedding 的维度
-    self.sa_head = MultiHeadAttention(4, n_embd // 4) # 4 个 head，每个 head 的维度是 n_embd // 4，这样拼接后总维度还是 n_embd
-    self.ffwd = FeedForward(n_embd) # (B, T, C) -> (B, T, C) 前馈网络保持输入输出维度一致
-    self.lm_head = nn.Linear(n_embd, vocab_size) # 把 embedding 映射回 vocab_size
+    self.blocks = nn.Sequential(
+      Block(n_embd, n_head=4),
+      Block(n_embd, n_head=4),
+      Block(n_embd, n_head=4),
+      Block(n_embd, n_head=4),
+    ) # 4 个 Block 堆叠在一起，增加模型的深度和表达能力
+    self.lm_head = nn.Linear(n_embd, vocab_size) # 最后把 n_embd 维的表示映射回 vocab_size 维，得到每个 token 的预测概率分布
 
   def forward(self, idx, targets=None):
     B, T = idx.shape
@@ -158,8 +186,7 @@ class BigramLanguageModel(nn.Module):
     tok_embd = self.token_embedding_table(idx) # (B, T, C)
     pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
     x = tok_embd + pos_embd # (B, T, C) 位置编码和 token embedding 相加，得到最终的输入表示
-    x = self.sa_head(x) # (B, T, C) 经过自注意力层处理
-    x = self.ffwd(x) # (B, T, C) 经过前馈网络处理
+    x = self.blocks(x) # (B, T, C) 经过多个 Block 的处理，得到新的表示
     logits = self.lm_head(x) # (B, T, vocab_size)
 
     if targets is None:
