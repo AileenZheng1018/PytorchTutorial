@@ -12,7 +12,12 @@ batch_size = 64
 block_size = 256
 max_iters = 5000
 learning_rate = 3e-4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+if torch.cuda.is_available():
+  device = 'cuda'
+elif torch.backends.mps.is_available():
+  device = 'mps'
+else:
+  device = 'cpu'
 eval_iters = 300
 n_embd = 384 # 每个 token 用多少维向量表示
 n_head = 8 # 多头注意力机制中 head 的数量
@@ -224,6 +229,7 @@ class BigramLanguageModel(nn.Module):
   def generate(self, idx, max_new_tokens):  # 自回归文本生成
     # idx is (B, T)-array of indices in the current text
     # max_new_tokens: 要新生成多少个 token
+    idx = idx.to(device)
     for _ in range(max_new_tokens):   # 循环 max_new_tokens 次，每次生成一个 token。
       # 每次循环，模型都会根据当前文本 idx 预测下一个 token 的概率分布，然后从中采样一个 token，追加到 idx 中，形成新的文本输入。
       idx_cond = idx[:, -block_size:] # (B, block_size) 取当前文本的最后 block_size 个 token 作为输入，确保输入长度不超过模型的上下文窗口。
@@ -263,4 +269,4 @@ for step in range(max_iters):
   loss.backward()
   optimizer.step()
 
-print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long), max_new_tokens=500)[0].tolist()))
+print(decode(m.generate(idx = torch.zeros((1,1), dtype=torch.long, device=device), max_new_tokens=500)[0].tolist()))
